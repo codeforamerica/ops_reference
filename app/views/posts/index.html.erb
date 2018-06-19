@@ -1,1 +1,15 @@
-Hello World
+<table>
+  <thead>
+    <th>Created At</th>
+    <th>Name</th>
+    <th>Processed</th>
+  </thead>
+
+  <% @posts.each do |post| %>
+    <tr>
+      <td><%= time_ago_in_words post.created_at %></td>
+      <td><%= post.name %></td>
+      <td><%= post.processed ? 'Yes' : 'No' %></td>
+    </tr>
+  <% end %>
+</table>
