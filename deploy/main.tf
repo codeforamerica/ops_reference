@@ -17,6 +17,99 @@ variable "access_key" {}
 variable "secret_key" {}
 variable "project_name" {}
 variable "rails_master_key" {}
+variable "rds_password" {}
+
+resource "aws_iam_instance_profile" "default" {
+  name = "default"
+  role = "${aws_iam_role.default.name}"
+}
+
+resource "aws_iam_role" "default" {
+  name = "default"
+  assume_role_policy = <<EOF
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Action": "sts:AssumeRole",
+            "Principal": {
+               "Service": "ec2.amazonaws.com"
+            },
+            "Effect": "Allow"
+        }
+    ]
+}
+EOF
+}
+
+resource "aws_vpc" "default" {
+  cidr_block = "10.0.0.0/16"
+}
+
+resource "aws_security_group" "rds" {
+  name = "rds_security"
+  vpc_id = "${aws_vpc.default.id}"
+
+  ingress {
+    from_port = 5432
+    to_port = 5432
+    protocol = "tcp"
+    security_groups = ["${aws_security_group.application.id}"]
+  }
+
+  egress {
+    from_port = 0
+    to_port = 0
+    protocol = "-1"
+    cidr_blocks = [
+      "0.0.0.0/0"
+    ]
+  }
+}
+
+resource "aws_security_group" "application" {
+  name = "application"
+  vpc_id = "${aws_vpc.default.id}"
+
+  ingress {
+    from_port = 80
+    to_port = 80
+    protocol = "tcp"
+    security_groups = ["${aws_security_group.load_balancer.id}"]
+  }
+
+  egress {
+    from_port = 0
+    to_port = 0
+    protocol = "-1"
+    cidr_blocks = [
+      "0.0.0.0/0"
+    ]
+  }
+}
+
+resource "aws_security_group" "load_balancer" {
+  name = "load_balancer"
+  vpc_id = "${aws_vpc.default.id}"
+
+  ingress {
+    from_port = 0
+    to_port = 0
+    protocol = "tcp"
+    cidr_blocks = [
+      "0.0.0.0/0"
+    ]
+  }
+
+  egress {
+    from_port = 0
+    to_port = 0
+    protocol = "-1"
+    cidr_blocks = [
+      "0.0.0.0/0"
+    ]
+  }
+}
 
 resource "aws_elastic_beanstalk_application" "beanstalk_app" {
   name = "${var.project_name}"
@@ -38,4 +131,70 @@ resource "aws_elastic_beanstalk_environment" "beanstalk_env" {
     name = "RAILS_MASTER_KEY"
     value = "${var.rails_master_key}"
   }
+
+  setting {
+    namespace = "aws:elasticbeanstalk:application:environment"
+    name = "DATABASE_URL"
+    value = "postgresql://${aws_db_instance.default.username}:${var.rds_password}@${aws_db_instance.default.endpoint}/${aws_db_instance.default.name}"
+  }
+
+  setting {
+    namespace = "aws:elasticbeanstalk:healthreporting:system"
+    name = "SystemType"
+    value = "enhanced"
+  }
+
+  setting {
+    namespace = "aws:autoscaling:launchconfiguration"
+    name = "IamInstanceProfile"
+    value = "${aws_iam_instance_profile.default.arn}"
+  }
+
+  setting {
+    namespace = "aws:ec2:vpc"
+    name = "VPCId"
+    value = "${aws_vpc.default.id}"
+  }
+
+  setting {
+    namespace = "aws:elb:loadbalancer"
+    name = "SecurityGroups"
+    value = "${aws_security_group.load_balancer.id}"
+  }
+
+  setting {
+    namespace = "aws:autoscaling:launchconfiguration"
+    name = "SecurityGroups"
+    value = "${aws_security_group.application.id}"
+  }
+}
+
+resource "aws_subnet" "rds" {
+  vpc_id     = "${aws_vpc.default.id}"
+  cidr_block = "10.0.1.0/24"
+
+  tags {
+    Name = "RDS"
+  }
+}
+
+resource "aws_db_subnet_group" "rds" {
+  name       = "rds"
+  subnet_ids = ["${aws_subnet.rds.id}"]
+
+  tags {
+    Name = "DB subnet group"
+  }
+}
+
+resource "aws_db_instance" "default" {
+  allocated_storage    = 10
+  storage_type         = "gp2"
+  engine               = "postgres"
+  instance_class       = "db.t2.micro"
+  name                 = "ops_reference_production"
+  username             = "ops_reference"
+  password             = "${var.rds_password}"
+  vpc_security_group_ids = ["${aws_security_group.rds.id}"]
+  db_subnet_group_name = "${aws_db_subnet_group.rds.name}"
 }
