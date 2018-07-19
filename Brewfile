@@ -1,0 +1,2 @@
+brew "terraform"
+brew "awsebcli"

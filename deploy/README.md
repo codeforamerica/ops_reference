@@ -8,8 +8,3 @@ Define a secrets file with Amazon credentials that have access to provisioning r
 
 # To preview changes to infrastructure
 `terraform plan -var-file=varfile -var-file=secrets`
-
-# To deploy
-Set up a virtualenv for Python
-`sudo easy_install pip`
-`pip install virtualenv`

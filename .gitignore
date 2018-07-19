@@ -27,3 +27,8 @@
 deploy/.terraform
 deploy/secrets
 deploy/development
+
+# Elastic Beanstalk Files
+.elasticbeanstalk/*
+!.elasticbeanstalk/*.cfg.yml
+!.elasticbeanstalk/*.global.yml
