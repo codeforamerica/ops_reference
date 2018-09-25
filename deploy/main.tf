@@ -16,8 +16,8 @@ provider "aws" {
 variable "access_key" {}
 variable "secret_key" {}
 variable "project_name" {}
+variable "stage_name" {}
 variable "rails_master_key" {}
-variable "rds_password" {}
 
 resource "aws_iam_instance_profile" "default" {
   name = "default"
@@ -116,7 +116,7 @@ resource "aws_elastic_beanstalk_application" "beanstalk_app" {
 }
 
 resource "aws_elastic_beanstalk_environment" "beanstalk_env" {
-  name = "${var.project_name}-development"
+  name = "${var.project_name}-${var.stage_name}"
   application = "${aws_elastic_beanstalk_application.beanstalk_app.name}"
   solution_stack_name = "64bit Amazon Linux 2018.03 v2.8.1 running Ruby 2.5 (Puma)"
 
@@ -135,7 +135,7 @@ resource "aws_elastic_beanstalk_environment" "beanstalk_env" {
   setting {
     namespace = "aws:elasticbeanstalk:application:environment"
     name = "DATABASE_URL"
-    value = "postgresql://${aws_db_instance.default.username}:${var.rds_password}@${aws_db_instance.default.endpoint}/${aws_db_instance.default.name}"
+    value = "postgresql://${aws_db_instance.default.username}:${random_string.rds_password.result}@${aws_db_instance.default.endpoint}/${aws_db_instance.default.name}"
   }
 
   setting {
@@ -157,6 +157,18 @@ resource "aws_elastic_beanstalk_environment" "beanstalk_env" {
   }
 
   setting {
+    namespace = "aws:ec2:vpc"
+    name = "Subnets"
+    value = "${aws_subnet.private_1.id},${aws_subnet.private_2.id}"
+  }
+
+  setting {
+    namespace = "aws:ec2:vpc"
+    name = "ELBSubnets"
+    value = "${aws_subnet.public_1.id},${aws_subnet.public_2.id}"
+  }
+
+  setting {
     namespace = "aws:elb:loadbalancer"
     name = "SecurityGroups"
     value = "${aws_security_group.load_balancer.id}"
@@ -169,22 +181,152 @@ resource "aws_elastic_beanstalk_environment" "beanstalk_env" {
   }
 }
 
-resource "aws_subnet" "rds" {
+resource "aws_internet_gateway" "gw" {
+  vpc_id = "${aws_vpc.default.id}"
+
+  tags {
+    Name = "default"
+  }
+}
+
+resource "aws_route_table" "gw_route" {
+  vpc_id = "${aws_vpc.default.id}"
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    gateway_id = "${aws_internet_gateway.gw.id}"
+  }
+
+  tags {
+    Name = "public"
+  }
+}
+
+resource "aws_route_table_association" "gw_public_1" {
+  subnet_id      = "${aws_subnet.public_1.id}"
+  route_table_id = "${aws_route_table.gw_route.id}"
+}
+
+resource "aws_route_table_association" "gw_public_2" {
+  subnet_id      = "${aws_subnet.public_2.id}"
+  route_table_id = "${aws_route_table.gw_route.id}"
+}
+
+resource "aws_eip" "public_1" {}
+
+resource "aws_eip" "public_2" {}
+
+
+resource "aws_nat_gateway" "public_1" {
+  allocation_id = "${aws_eip.public_1.id}"
+  subnet_id     = "${aws_subnet.public_1.id}"
+
+  tags {
+    Name = "Public 1 NAT"
+  }
+}
+
+resource "aws_nat_gateway" "public_2" {
+  allocation_id = "${aws_eip.public_2.id}"
+  subnet_id     = "${aws_subnet.public_2.id}"
+
+  tags {
+    Name = "Public 2 NAT"
+  }
+}
+
+resource "aws_route_table" "nat_route_private_1" {
+  vpc_id = "${aws_vpc.default.id}"
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    nat_gateway_id = "${aws_nat_gateway.public_1.id}"
+  }
+
+  tags {
+    Name = "private 1 route"
+  }
+}
+
+resource "aws_route_table" "nat_route_private_2" {
+  vpc_id = "${aws_vpc.default.id}"
+
+  route {
+    cidr_block = "0.0.0.0/0"
+    nat_gateway_id = "${aws_nat_gateway.public_2.id}"
+  }
+
+  tags {
+    Name = "private 2 route"
+  }
+}
+
+resource "aws_route_table_association" "nat_private_1" {
+  subnet_id      = "${aws_subnet.private_1.id}"
+  route_table_id = "${aws_route_table.nat_route_private_1.id}"
+}
+
+resource "aws_route_table_association" "nat_private_2" {
+  subnet_id      = "${aws_subnet.private_2.id}"
+  route_table_id = "${aws_route_table.nat_route_private_2.id}"
+}
+
+resource "aws_subnet" "public_1" {
+  vpc_id     = "${aws_vpc.default.id}"
+  cidr_block = "10.0.3.0/24"
+
+  availability_zone = "us-east-1a"
+
+  tags {
+    Name = "public 1"
+  }
+}
+
+resource "aws_subnet" "public_2" {
+  vpc_id     = "${aws_vpc.default.id}"
+  cidr_block = "10.0.4.0/24"
+
+  availability_zone = "us-east-1b"
+
+  tags {
+    Name = "public 2"
+  }
+}
+
+resource "aws_subnet" "private_1" {
   vpc_id     = "${aws_vpc.default.id}"
   cidr_block = "10.0.1.0/24"
 
+  availability_zone = "us-east-1a"
+
   tags {
-    Name = "RDS"
+    Name = "private 1"
+  }
+}
+
+resource "aws_subnet" "private_2" {
+  vpc_id     = "${aws_vpc.default.id}"
+  cidr_block = "10.0.2.0/24"
+
+  availability_zone = "us-east-1b"
+
+  tags {
+    Name = "private 2"
   }
 }
 
 resource "aws_db_subnet_group" "rds" {
   name       = "rds"
-  subnet_ids = ["${aws_subnet.rds.id}"]
+  subnet_ids = ["${aws_subnet.private_1.id}", "${aws_subnet.private_2.id}"]
 
   tags {
     Name = "DB subnet group"
   }
+}
+
+resource "random_string" "rds_password" {
+  length = 30
+  special = false
 }
 
 resource "aws_db_instance" "default" {
@@ -194,7 +336,9 @@ resource "aws_db_instance" "default" {
   instance_class       = "db.t2.micro"
   name                 = "ops_reference_production"
   username             = "ops_reference"
-  password             = "${var.rds_password}"
+  password             = "${random_string.rds_password.result}"
   vpc_security_group_ids = ["${aws_security_group.rds.id}"]
   db_subnet_group_name = "${aws_db_subnet_group.rds.name}"
+  skip_final_snapshot = true
 }
+
